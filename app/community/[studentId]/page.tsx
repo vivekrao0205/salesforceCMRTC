@@ -41,13 +41,21 @@ export default function StudentProfilePage({
         const found = await getStudentById(params.studentId);
         setStudent(found);
         if (found) {
-          const record = await syncSingleTrailheadProfile(
-            found.id,
-            found.trailheadProfileLink,
-            found.totalTrailheadScore,
-            found.totalTrailheadBadges
-          );
-          setTrailhead(record);
+          const res = await fetch('/api/trailhead/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              studentId: found.id,
+              profileUrl: found.trailheadProfileLink,
+              submittedPoints: found.totalTrailheadScore,
+              submittedBadges: found.totalTrailheadBadges,
+              forceRefresh: false,
+            }),
+          });
+          const data = await res.json();
+          if (data.success && data.trailhead) {
+            setTrailhead(data.trailhead);
+          }
         }
       } catch (err) {
         console.error('Error loading student profile:', err);
@@ -84,7 +92,17 @@ export default function StudentProfilePage({
   };
 
   if (loading) {
-    return <div className="py-stack-lg text-center text-xs font-sans text-on-surface-variant">Updating Trailblazer Data...</div>;
+    return (
+      <GlassCard className="max-w-xl mx-auto my-16 p-12 text-center space-y-4 font-sans">
+        <div className="inline-flex items-center justify-center gap-3 text-sm text-secondary font-headline font-semibold">
+          <RefreshCw className="w-5 h-5 animate-spin text-secondary" />
+          <span>Loading Trailblazer profile...</span>
+        </div>
+        <p className="text-xs text-outline">
+          Synchronizing live Trailblazer statistics directly from Salesforce public profile.
+        </p>
+      </GlassCard>
+    );
   }
 
   if (!student) {
@@ -140,9 +158,16 @@ export default function StudentProfilePage({
     }
   });
 
-  const displayPoints = trailhead?.points ?? student.totalTrailheadScore;
-  const displayBadges = trailhead?.badges ?? student.totalTrailheadBadges;
-  const displayRank = trailhead?.rank || 'Explorer';
+  const isProfileUnavailable =
+    !student.trailheadProfileLink ||
+    !student.trailheadProfileLink.trim() ||
+    trailhead?.syncStatus === 'NO_PROFILE' ||
+    trailhead?.syncStatus === 'INVALID_URL' ||
+    trailhead?.syncStatus === 'UNAVAILABLE';
+
+  const displayPoints = isProfileUnavailable ? '—' : formatNumber(trailhead?.points);
+  const displayBadges = isProfileUnavailable ? '—' : formatNumber(trailhead?.badges);
+  const displayRank = isProfileUnavailable ? 'N/A' : (trailhead?.rank || 'Explorer');
 
   return (
     <div className="py-stack-lg max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop space-y-stack-md font-sans">
@@ -182,7 +207,6 @@ export default function StudentProfilePage({
             <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 text-xs font-sans text-on-surface-variant">
               <Badge variant="primary">{student.branch}</Badge>
               <Badge variant="outline">YEAR {student.year}</Badge>
-              {student.section && <Badge variant="outline">SECTION {student.section}</Badge>}
             </div>
 
             {/* Trailhead Link & Sync Status Indicator */}
@@ -203,15 +227,19 @@ export default function StudentProfilePage({
               {/* Status Badge */}
               {trailhead?.syncStatus === 'VERIFIED' ? (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-100 text-green-800 text-[11px] font-label font-medium">
-                  <ShieldCheck className="w-3.5 h-3.5 text-green-600" /> {trailhead.syncStatusLabel}
+                  <ShieldCheck className="w-3.5 h-3.5 text-green-600" /> VERIFIED FROM TRAILBLAZER
                 </span>
               ) : trailhead?.syncStatus === 'PRIVATE' ? (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[11px] font-label font-medium">
                   <Lock className="w-3.5 h-3.5 text-amber-600" /> Private Profile
                 </span>
-              ) : (
+              ) : trailhead?.syncStatus === 'NO_PROFILE' || trailhead?.syncStatus === 'INVALID_URL' ? (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant text-[11px] font-label">
-                  <Clock className="w-3.5 h-3.5 text-outline" /> Club Form Snapshot
+                  <Clock className="w-3.5 h-3.5 text-outline" /> TRAILBLAZER DATA UNAVAILABLE
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 text-blue-800 text-[11px] font-label font-medium border border-blue-200">
+                  <Clock className="w-3.5 h-3.5 text-blue-600" /> LAST VERIFIED
                 </span>
               )}
             </div>
@@ -224,7 +252,13 @@ export default function StudentProfilePage({
         <div className="flex items-center justify-between border-b border-outline-variant/20 pb-2">
           <h2 className="font-headline text-headline-sm text-primary">Salesforce Trailhead Progress</h2>
           <span className="text-xs font-sans text-secondary font-medium">
-            {refreshing ? 'Updating Trailblazer Data...' : trailhead?.syncStatusLabel}
+            {refreshing
+              ? 'Updating Trailblazer Data...'
+              : trailhead?.syncStatus === 'VERIFIED'
+              ? 'VERIFIED FROM TRAILBLAZER'
+              : trailhead?.syncStatus === 'NO_PROFILE'
+              ? 'TRAILBLAZER DATA UNAVAILABLE'
+              : 'LAST VERIFIED'}
           </span>
         </div>
 
@@ -235,7 +269,7 @@ export default function StudentProfilePage({
               <Award className="w-5 h-5 text-secondary" />
             </div>
             <div className="font-headline text-headline-sm text-primary font-bold">
-              {formatNumber(displayPoints)}
+              {displayPoints}
             </div>
             <p className="font-sans text-[11px] text-on-surface-variant mt-1">Trailhead learning score</p>
           </GlassCard>
@@ -246,7 +280,7 @@ export default function StudentProfilePage({
               <BadgeCheck className="w-5 h-5 text-secondary" />
             </div>
             <div className="font-headline text-headline-sm text-primary font-bold">
-              {formatNumber(displayBadges)}
+              {displayBadges}
             </div>
             <p className="font-sans text-[11px] text-on-surface-variant mt-1">Badges earned on Trailhead</p>
           </GlassCard>
@@ -268,7 +302,7 @@ export default function StudentProfilePage({
               <Compass className="w-5 h-5 text-secondary" />
             </div>
             <div className="font-headline text-headline-sm text-primary font-bold">
-              {trailhead?.trails || 0}
+              {isProfileUnavailable ? '—' : trailhead?.trails || 0}
             </div>
             <p className="font-sans text-[11px] text-on-surface-variant mt-1">Completed trails</p>
           </GlassCard>
@@ -279,7 +313,7 @@ export default function StudentProfilePage({
               <BookOpen className="w-5 h-5 text-secondary" />
             </div>
             <div className="font-headline text-headline-sm text-primary font-bold">
-              {trailhead?.superbadges || 0}
+              {isProfileUnavailable ? '—' : trailhead?.superbadges || 0}
             </div>
             <p className="font-sans text-[11px] text-on-surface-variant mt-1">Practical challenges</p>
           </GlassCard>
@@ -312,19 +346,13 @@ export default function StudentProfilePage({
               <span className="text-outline">Academic Year</span>
               <span className="font-semibold text-primary">Year {student.year}</span>
             </div>
-            {student.section && (
-              <div className="flex justify-between py-1 border-b border-outline-variant/10">
-                <span className="text-outline">Section</span>
-                <span className="font-semibold text-primary">Section {student.section}</span>
-              </div>
-            )}
             <div className="flex justify-between py-1 border-b border-outline-variant/10">
-              <span className="text-outline">Trailhead Score (Snapshot)</span>
-              <span className="font-semibold text-secondary">{formatNumber(displayPoints)}</span>
+              <span className="text-outline">Trailhead Score</span>
+              <span className="font-semibold text-secondary">{displayPoints}</span>
             </div>
             <div className="flex justify-between py-1">
-              <span className="text-outline">Trailhead Badges (Snapshot)</span>
-              <span className="font-semibold text-secondary">{formatNumber(displayBadges)}</span>
+              <span className="text-outline">Trailhead Badges</span>
+              <span className="font-semibold text-secondary">{displayBadges}</span>
             </div>
           </div>
         </GlassCard>
@@ -333,7 +361,7 @@ export default function StudentProfilePage({
         <GlassCard className="space-y-4">
           <div className="border-b border-outline-variant/20 pb-3 flex items-center justify-between">
             <h3 className="font-headline text-base font-semibold text-primary">Additional Information</h3>
-            <Badge variant="secondary">Form Response</Badge>
+            <Badge variant="secondary">Member Details</Badge>
           </div>
 
           {additionalFields.length > 0 ? (
@@ -355,7 +383,7 @@ export default function StudentProfilePage({
             </div>
           ) : (
             <div className="text-xs text-outline italic py-4">
-              All available Google Form responses are presented in the profile summary.
+              All available profile details are presented in the summary.
             </div>
           )}
         </GlassCard>

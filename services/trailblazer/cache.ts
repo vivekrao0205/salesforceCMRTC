@@ -21,6 +21,7 @@ export interface TrailblazerRecord {
   superbadges: number;
   certifications: number;
   lastSyncedAt: string;
+  fetchedAt?: number;
   syncStatus: SyncStatus;
   source: 'trailblazer-public-rendered' | 'cache' | 'sheet-snapshot' | 'unavailable';
   syncStatusLabel: string;

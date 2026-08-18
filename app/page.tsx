@@ -18,6 +18,7 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { Badge } from '@/components/ui/Badge';
 import { InitialsAvatar } from '@/components/ui/InitialsAvatar';
 import { getStudents } from '@/services/students';
+import { syncAllTrailheadProfiles } from '@/services/trailheadService';
 import { formatNumber, parseNumericValue } from '@/lib/utils';
 
 const JOIN_FORM_URL =
@@ -26,11 +27,13 @@ const JOIN_FORM_URL =
 
 export default async function HomePage() {
   const students = await getStudents();
+  const summary = await syncAllTrailheadProfiles(students, false);
+  const records = summary.records;
 
-  // Calculate real metrics from normalized student responses
+  // Calculate real metrics from live synchronized Trailblazer records
   const totalStudents = students.length;
-  const totalPoints = students.reduce((sum, s) => sum + parseNumericValue(s.totalTrailheadScore), 0);
-  const totalBadges = students.reduce((sum, s) => sum + parseNumericValue(s.totalTrailheadBadges), 0);
+  const totalPoints = Object.values(records).reduce((sum, r) => sum + (r.points || 0), 0);
+  const totalBadges = Object.values(records).reduce((sum, r) => sum + (r.badges || 0), 0);
 
   return (
     <div className="space-y-stack-lg pb-stack-lg">
@@ -69,47 +72,57 @@ export default async function HomePage() {
             </div>
           </div>
 
-          {/* Real Statistics Card */}
-          <div className="relative w-full h-[380px] lg:h-[480px] rounded-card overflow-hidden glass-panel ambient-shadow flex flex-col justify-between p-8 bg-gradient-to-tr from-primary-container via-primary to-secondary text-on-primary">
+          {/* Real Statistics Card — Premium Salesforce-Inspired Live Data Box */}
+          <div className="relative w-full rounded-2xl overflow-hidden shadow-2xl flex flex-col justify-between p-7 md:p-8 bg-gradient-to-br from-[#00A1E0] via-[#0176D3] to-[#0B5C9E] text-white border border-white/20">
             <div className="flex items-center justify-between">
-              <Badge variant="secondary">Student Tech Community</Badge>
-              <Cloud className="w-10 h-10 text-secondary-fixed opacity-80" />
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-md border border-white/25 text-white font-label text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                LIVE
+              </div>
+              <Cloud className="w-9 h-9 text-white/90" />
             </div>
 
-            <div className="space-y-4 my-auto">
-              <div className="p-4 rounded-xl bg-white/10 backdrop-blur-md border border-white/20">
-                <div className="flex items-center gap-3 mb-2">
-                  <Sparkles className="w-5 h-5 text-secondary-container" />
-                  <span className="font-headline text-sm font-semibold">Live Community Metrics</span>
+            <div className="space-y-5 my-auto py-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-headline text-lg md:text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-amber-300 shrink-0" />
+                    LIVE TRAILBLAZER DATA
+                  </h3>
                 </div>
-                <p className="font-sans text-xs text-primary-fixed-dim">
-                  Calculated directly from live student Google Form responses & Trailhead learning scores.
+                <p className="font-sans text-xs text-blue-100/90 leading-relaxed">
+                  Live data from Salesforce Trailblazer public profiles.
                 </p>
+                <div className="flex items-center gap-2 pt-1 text-[11px] text-blue-100/80 font-mono">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  Live synchronization enabled
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                  <div className="font-headline font-bold text-xl text-secondary-fixed">{totalStudents}</div>
-                  <div className="text-[11px] text-primary-fixed-dim">Registered Members</div>
+              {/* Dynamic Statistics */}
+              <div className="grid grid-cols-3 gap-3 text-center pt-2">
+                <div className="p-3.5 rounded-xl bg-white/10 backdrop-blur-md border border-white/15 shadow-inner">
+                  <div className="font-headline font-bold text-xl md:text-2xl text-white">{totalStudents}</div>
+                  <div className="text-[11px] font-sans font-medium text-blue-100/90 mt-1">Registered Members</div>
                 </div>
-                <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                  <div className="font-headline font-bold text-xl text-secondary-fixed">{formatNumber(totalPoints)}</div>
-                  <div className="text-[11px] text-primary-fixed-dim">Trailhead Points</div>
+                <div className="p-3.5 rounded-xl bg-white/10 backdrop-blur-md border border-white/15 shadow-inner">
+                  <div className="font-headline font-bold text-xl md:text-2xl text-amber-300">{formatNumber(totalPoints)}</div>
+                  <div className="text-[11px] font-sans font-medium text-blue-100/90 mt-1">Trailhead Points</div>
                 </div>
-                <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                  <div className="font-headline font-bold text-xl text-secondary-fixed">{formatNumber(totalBadges)}</div>
-                  <div className="text-[11px] text-primary-fixed-dim">Earned Badges</div>
+                <div className="p-3.5 rounded-xl bg-white/10 backdrop-blur-md border border-white/15 shadow-inner">
+                  <div className="font-headline font-bold text-xl md:text-2xl text-white">{formatNumber(totalBadges)}</div>
+                  <div className="text-[11px] font-sans font-medium text-blue-100/90 mt-1">Badges Earned</div>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 pt-4 border-t border-white/15">
-              <div className="w-9 h-9 rounded-full bg-white p-0.5 shrink-0 flex items-center justify-center">
+            <div className="flex items-center gap-3 pt-4 border-t border-white/20">
+              <div className="w-9 h-9 rounded-full bg-white p-0.5 shrink-0 flex items-center justify-center shadow-md">
                 <Image src="/images/logo.png" alt="Logo" width={36} height={36} className="object-contain" />
               </div>
               <div>
-                <div className="font-headline text-xs font-semibold">Official Club Platform</div>
-                <div className="font-sans text-[11px] text-primary-fixed-dim">CMR Technical Campus (CMRTC)</div>
+                <div className="font-headline text-xs font-bold text-white">Official Salesforce Student Group</div>
+                <div className="font-sans text-[11px] text-blue-100/90">CMR Technical Campus (CMRTC)</div>
               </div>
             </div>
           </div>

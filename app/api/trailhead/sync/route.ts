@@ -4,7 +4,7 @@ import { syncSingleTrailheadProfile } from '@/services/trailheadService';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { studentId, profileUrl, submittedPoints, submittedBadges } = body;
+    const { studentId, profileUrl, submittedPoints, submittedBadges, forceRefresh } = body;
 
     if (!studentId) {
       return NextResponse.json(
@@ -13,12 +13,14 @@ export async function POST(request: Request) {
       );
     }
 
+    const shouldForce = forceRefresh !== undefined ? Boolean(forceRefresh) : true;
+
     const record = await syncSingleTrailheadProfile(
       studentId,
       profileUrl,
       submittedPoints || 0,
       submittedBadges || 0,
-      true // Force live refresh
+      shouldForce
     );
 
     return NextResponse.json({

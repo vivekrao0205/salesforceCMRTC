@@ -14,7 +14,8 @@ import {
   Lock,
   Clock,
   ShieldCheck,
-  Compass
+  RefreshCw,
+  CheckCircle2
 } from 'lucide-react';
 import { Student } from '@/types';
 import { getStudents } from '@/services/students';
@@ -29,39 +30,86 @@ export default function LeaderboardPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [cachedRecords, setCachedRecords] = useState<Record<string, TrailblazerRecord>>({});
   const [loading, setLoading] = useState(true);
+  const [syncStatusState, setSyncStatusState] = useState<'idle' | 'syncing' | 'complete'>('idle');
   const [search, setSearch] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('ALL');
   const [selectedYear, setSelectedYear] = useState('ALL');
-  const [selectedSection, setSelectedSection] = useState('ALL');
   const [activeTab, setActiveTab] = useState<'points' | 'badges' | 'rank' | 'superbadges'>('points');
 
-  useEffect(() => {
-    async function loadData() {
+  const loadData = async (forceRefresh = false) => {
+    if (forceRefresh) {
+      setSyncStatusState('syncing');
+    } else {
       setLoading(true);
-      try {
-        const data = await getStudents();
-        setStudents(data);
-        setCachedRecords(getAllCachedTrailheadRecords());
-      } catch (err) {
-        console.error('Error loading leaderboard students:', err);
-      } finally {
-        setLoading(false);
-      }
     }
-    loadData();
+
+    try {
+      // 1. Fetch registered student list
+      const data = await getStudents(forceRefresh);
+      setStudents(data);
+
+      // 2. Execute server-side Trailblazer synchronization engine to bypass browser CORS
+      const res = await fetch('/api/trailhead/sync-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ forceRefresh }),
+      });
+
+      const json = await res.json();
+      if (json.success && json.records) {
+        setCachedRecords((prev) => {
+          const updated = { ...prev };
+          Object.keys(json.records).forEach((studentId) => {
+            const fresh = json.records[studentId];
+            const existing = prev[studentId];
+            // Rule: NEVER replace valid live data with zero/unavailable due to transient error
+            if (fresh.syncStatus === 'VERIFIED' || !existing || existing.syncStatus !== 'VERIFIED') {
+              updated[studentId] = fresh;
+            }
+          });
+          return updated;
+        });
+      } else {
+        setCachedRecords(getAllCachedTrailheadRecords());
+      }
+
+      if (forceRefresh) {
+        setSyncStatusState('complete');
+        setTimeout(() => setSyncStatusState('idle'), 3000);
+      }
+    } catch (err) {
+      console.error('Error in Leaderboard synchronization:', err);
+      setCachedRecords(getAllCachedTrailheadRecords());
+      if (forceRefresh) setSyncStatusState('idle');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData(false);
   }, []);
 
-  // Filter & Rank Pipeline
+  // Filter & Rank Pipeline — Driven strictly by synchronized Trailblazer records
   const filteredAndRanked = useMemo(() => {
     let list = students.map((s) => {
       const rec = cachedRecords[s.id];
-      const points = rec?.points ?? s.totalTrailheadScore;
-      const badges = rec?.badges ?? s.totalTrailheadBadges;
-      const rank = rec?.rank || 'Explorer';
-      const superbadges = rec?.superbadges ?? s.superbadgesCount ?? 0;
-      const statusLabel = rec?.syncStatusLabel || 'CLUB FORM SNAPSHOT';
+      const hasNoProfile = !s.trailheadProfileLink || !s.trailheadProfileLink.trim() || rec?.syncStatus === 'NO_PROFILE' || rec?.syncStatus === 'INVALID_URL';
       const isVerified = rec?.syncStatus === 'VERIFIED';
       const isPrivate = rec?.syncStatus === 'PRIVATE';
+      const isUnavailable = hasNoProfile || rec?.syncStatus === 'UNAVAILABLE' || rec?.syncStatus === 'FAILED';
+
+      const points = hasNoProfile ? 0 : (rec?.points ?? 0);
+      const badges = hasNoProfile ? 0 : (rec?.badges ?? 0);
+      const rank = hasNoProfile ? 'N/A' : (rec?.rank || 'Explorer');
+      const superbadges = hasNoProfile ? 0 : (rec?.superbadges ?? 0);
+      const statusLabel = isVerified
+        ? 'VERIFIED FROM TRAILBLAZER'
+        : isPrivate
+        ? 'PRIVATE'
+        : isUnavailable
+        ? 'TRAILBLAZER DATA UNAVAILABLE'
+        : 'LAST VERIFIED';
 
       return {
         student: s,
@@ -72,6 +120,7 @@ export default function LeaderboardPage() {
         statusLabel,
         isVerified,
         isPrivate,
+        isUnavailable,
       };
     });
 
@@ -96,19 +145,12 @@ export default function LeaderboardPage() {
       list = list.filter((item) => String(item.student.year) === String(selectedYear));
     }
 
-    // 4. Section filter
-    if (selectedSection !== 'ALL') {
-      list = list.filter(
-        (item) => item.student.section && item.student.section.toLowerCase() === selectedSection.toLowerCase()
-      );
-    }
-
-    // Sort by active metric tab
+    // Sort by active metric tab using LIVE synchronized Trailblazer statistics
     list.sort((a, b) => {
       if (activeTab === 'badges') return b.badges - a.badges;
       if (activeTab === 'superbadges') return b.superbadges - a.superbadges;
       if (activeTab === 'rank') return b.points - a.points;
-      return b.points - a.points; // Default score points
+      return b.points - a.points;
     });
 
     // Competition Tie Ranking (#1, #1, #1, #4)
@@ -129,7 +171,7 @@ export default function LeaderboardPage() {
       }
       return { ...item, compRank: currentRank };
     });
-  }, [students, cachedRecords, search, selectedBranch, selectedYear, selectedSection, activeTab]);
+  }, [students, cachedRecords, search, selectedBranch, selectedYear, activeTab]);
 
   const uniqueBranches = useMemo(() => {
     const set = new Set<string>();
@@ -143,23 +185,40 @@ export default function LeaderboardPage() {
     return Array.from(set).sort();
   }, [students]);
 
-  const uniqueSections = useMemo(() => {
-    const set = new Set<string>();
-    students.forEach((s) => s.section && set.add(s.section));
-    return Array.from(set).sort();
-  }, [students]);
-
   return (
     <div className="py-stack-lg max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop space-y-stack-md font-sans">
-      {/* Header */}
-      <div className="text-center space-y-3">
-        <Badge variant="secondary">Trailblazer Recognition</Badge>
-        <h1 className="font-headline text-headline-md md:text-headline-lg text-primary">
-          Club Leaderboard
-        </h1>
-        <p className="font-sans text-xs text-on-surface-variant max-w-xl mx-auto">
-          Recognizing student learning achievements from public Trailblazer profiles and registered members.
-        </p>
+      {/* Header & Sync Action */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/20 pb-4">
+        <div>
+          <Badge variant="secondary">Trailblazer Recognition</Badge>
+          <h1 className="font-headline text-headline-md md:text-headline-lg text-primary mt-1">
+            Club Leaderboard
+          </h1>
+          <p className="font-sans text-xs text-on-surface-variant">
+            Recognizing live student learning achievements directly from synchronized Trailblazer profiles.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={loading || syncStatusState === 'syncing'}
+          onClick={() => loadData(true)}
+          icon={
+            syncStatusState === 'syncing' ? (
+              <RefreshCw className="w-3.5 h-3.5 ml-1 animate-spin" />
+            ) : syncStatusState === 'complete' ? (
+              <CheckCircle2 className="w-3.5 h-3.5 ml-1 text-green-600" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 ml-1" />
+            )
+          }
+        >
+          {syncStatusState === 'syncing'
+            ? 'Syncing All Profiles...'
+            : syncStatusState === 'complete'
+            ? 'Sync Complete'
+            : 'Sync All Trailblazer'}
+        </Button>
       </div>
 
       {/* Metric Tabs */}
@@ -200,9 +259,9 @@ export default function LeaderboardPage() {
 
       {/* Filter Controls Card */}
       <GlassCard className="p-4 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           {/* Search Input */}
-          <div className="relative col-span-1 sm:col-span-2 md:col-span-1">
+          <div className="relative col-span-1">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-outline" />
             <input
               type="text"
@@ -242,27 +301,20 @@ export default function LeaderboardPage() {
               ))}
             </select>
           </div>
-
-          {/* Section Filter */}
-          <div className="flex items-center gap-1.5 bg-surface-container-low border border-outline-variant/30 px-3 py-2 rounded-lg">
-            <Filter className="w-3.5 h-3.5 text-outline shrink-0" />
-            <select
-              value={selectedSection}
-              onChange={(e) => setSelectedSection(e.target.value)}
-              className="w-full bg-transparent text-xs text-on-surface focus:outline-none cursor-pointer"
-            >
-              <option value="ALL">All Sections</option>
-              {uniqueSections.map((sec) => (
-                <option key={sec} value={sec}>Section {sec}</option>
-              ))}
-            </select>
-          </div>
         </div>
       </GlassCard>
 
-      {/* Leaderboard Table / Cards */}
+      {/* Leaderboard Table / Loading State */}
       {loading ? (
-        <div className="py-stack-lg text-center text-xs text-on-surface-variant">Loading leaderboard...</div>
+        <GlassCard className="p-12 text-center space-y-4">
+          <div className="inline-flex items-center justify-center gap-3 text-sm text-secondary font-headline font-semibold">
+            <RefreshCw className="w-5 h-5 animate-spin text-secondary" />
+            <span>Syncing Trailblazer data...</span>
+          </div>
+          <p className="text-xs text-outline max-w-sm mx-auto">
+            Synchronizing live Trailblazer profiles and rank scores for all registered members.
+          </p>
+        </GlassCard>
       ) : filteredAndRanked.length === 0 ? (
         <GlassCard className="p-12 text-center space-y-3">
           <Trophy className="w-10 h-10 text-outline mx-auto" />
@@ -286,7 +338,7 @@ export default function LeaderboardPage() {
               </thead>
               <tbody className="divide-y divide-outline-variant/20">
                 {filteredAndRanked.map((item) => (
-                  <tr key={item.student.id} className="hover:bg-surface-container-low/40">
+                  <tr key={item.student.id} className="hover:bg-surface-container-low/40 transition-colors">
                     {/* Rank Medal Column */}
                     <td className="py-3.5 px-4 text-center font-headline font-bold text-sm">
                       {item.compRank === 1 ? (
@@ -294,11 +346,11 @@ export default function LeaderboardPage() {
                           <Medal className="w-4 h-4 text-amber-600" />
                         </span>
                       ) : item.compRank === 2 ? (
-                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-100 text-slate-700 border border-slate-300">
+                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-bold">
                           2
                         </span>
                       ) : item.compRank === 3 ? (
-                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-amber-50 text-amber-900 border border-amber-200">
+                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-amber-50 text-amber-900 border border-amber-200 font-bold">
                           3
                         </span>
                       ) : (
@@ -320,40 +372,44 @@ export default function LeaderboardPage() {
                     </td>
 
                     {/* Branch & Year */}
-                    <td className="py-3.5 px-4 text-on-surface-variant">
-                      {item.student.branch} • Yr {item.student.year} {item.student.section ? `(Sec ${item.student.section})` : ''}
+                    <td className="py-3.5 px-4 text-on-surface-variant font-medium">
+                      {item.student.branch} • Yr {item.student.year}
                     </td>
 
                     {/* Trailhead Rank */}
                     <td className="py-3.5 px-4">
-                      <span className="font-label text-xs uppercase font-semibold text-secondary">
+                      <span className="font-label text-xs uppercase font-bold text-secondary">
                         {item.rank}
                       </span>
                     </td>
 
                     {/* Points */}
-                    <td className="py-3.5 px-4 text-right font-semibold text-primary">
-                      {formatNumber(item.points)}
+                    <td className="py-3.5 px-4 text-right font-bold text-primary">
+                      {item.isUnavailable ? '—' : formatNumber(item.points)}
                     </td>
 
                     {/* Badges */}
-                    <td className="py-3.5 px-4 text-right text-secondary font-semibold">
-                      {formatNumber(item.badges)}
+                    <td className="py-3.5 px-4 text-right text-secondary font-bold">
+                      {item.isUnavailable ? '—' : formatNumber(item.badges)}
                     </td>
 
                     {/* Status Badge */}
                     <td className="py-3.5 px-4 text-right">
                       {item.isVerified ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-[10px] font-label font-medium">
-                          <ShieldCheck className="w-3 h-3 text-green-600" /> Verified
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 text-[10px] font-label font-medium border border-green-200">
+                          <ShieldCheck className="w-3 h-3 text-green-600" /> VERIFIED FROM TRAILBLAZER
                         </span>
                       ) : item.isPrivate ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-label font-medium">
-                          <Lock className="w-3 h-3 text-amber-600" /> Private
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-label font-medium border border-amber-200">
+                          <Lock className="w-3 h-3 text-amber-600" /> PRIVATE
+                        </span>
+                      ) : item.isUnavailable ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-surface-container text-outline text-[10px] font-label border border-outline-variant/30">
+                          <Clock className="w-3 h-3 text-outline" /> TRAILBLAZER DATA UNAVAILABLE
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container text-outline text-[10px] font-label">
-                          <Clock className="w-3 h-3 text-outline" /> Snapshot
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-800 text-[10px] font-label font-medium border border-blue-200">
+                          <Clock className="w-3 h-3 text-blue-600" /> LAST VERIFIED
                         </span>
                       )}
                     </td>

@@ -52,12 +52,9 @@ export function formatDate(dateString: string | undefined | null): string {
 /**
  * Deterministically generates student initials avatar from name.
  * Examples:
- * - "Sana Mehreen" -> "SM"
- * - "Palla Ramyarchitha" -> "PR"
- * - "GADDAM ABHIGNA" -> "GA"
- * - "K. Harsha" -> "KH"
- * - "M. Charanteja" -> "MC"
- * - "vamsi" -> "VA"
+ * - "Gattla Prekshith Reddy" -> "GP"
+ * - "Abhiigna" -> "A"
+ * - "Gandewar Vaishnavi" -> "GV"
  */
 export function getInitialsAvatar(name: string | undefined | null): string {
   if (!name || typeof name !== 'string') return '??';
@@ -70,8 +67,7 @@ export function getInitialsAvatar(name: string | undefined | null): string {
   if (parts.length === 0) return '??';
 
   if (parts.length === 1) {
-    const single = parts[0];
-    return single.length >= 2 ? single.slice(0, 2).toUpperCase() : single.slice(0, 1).toUpperCase();
+    return parts[0][0].toUpperCase();
   }
 
   const first = parts[0][0];

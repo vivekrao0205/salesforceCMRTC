@@ -2,6 +2,8 @@ import { TrailblazerRecord, getCachedProfile, setCachedProfile } from './cache';
 import { extractTrailblazerProfileId, normalizeTrailheadUrl, deriveRankFromPoints } from './normalizer';
 import { parseNumericValue } from '@/lib/utils';
 
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5-minute automatic background revalidation TTL
+
 export async function getPublicTrailblazerProfile(
   studentId: string,
   rawUrl: string | undefined | null,
@@ -11,12 +13,18 @@ export async function getPublicTrailblazerProfile(
 ): Promise<TrailblazerRecord> {
   const normalizedUrl = normalizeTrailheadUrl(rawUrl);
   const primaryHandle = extractTrailblazerProfileId(normalizedUrl);
-  const nowStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const now = Date.now();
+  const nowStr = new Date(now).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-  // 1. Return cache if available and verified
+  // 1. Return fresh verified cache if available within 5-minute TTL and not force-refreshing
   if (!forceRefresh) {
     const cached = getCachedProfile(studentId);
-    if (cached && cached.syncStatus === 'VERIFIED') {
+    if (
+      cached &&
+      cached.syncStatus === 'VERIFIED' &&
+      cached.fetchedAt &&
+      now - cached.fetchedAt < CACHE_TTL_MS
+    ) {
       return {
         ...cached,
         source: 'cache',
@@ -37,6 +45,7 @@ export async function getPublicTrailblazerProfile(
       superbadges: 0,
       certifications: 0,
       lastSyncedAt: nowStr,
+      fetchedAt: now,
       syncStatus: 'NO_PROFILE',
       source: 'unavailable',
       syncStatusLabel: 'TRAILBLAZER PROFILE NOT PROVIDED',
@@ -58,6 +67,7 @@ export async function getPublicTrailblazerProfile(
       superbadges: 0,
       certifications: 0,
       lastSyncedAt: nowStr,
+      fetchedAt: now,
       syncStatus: 'INVALID_URL',
       source: 'unavailable',
       syncStatusLabel: 'INVALID PROFILE URL',
@@ -65,24 +75,6 @@ export async function getPublicTrailblazerProfile(
     setCachedProfile(studentId, record);
     return record;
   }
-
-  // Fallback snapshot record (accurately labeled as CLUB FORM SNAPSHOT)
-  const sheetSnapshotRecord: TrailblazerRecord = {
-    success: false,
-    studentId,
-    trailblazerProfileId: primaryHandle,
-    trailheadProfileUrl: normalizedUrl,
-    points: parseNumericValue(submittedPoints),
-    badges: parseNumericValue(submittedBadges),
-    rank: deriveRankFromPoints(submittedPoints),
-    trails: 0,
-    superbadges: 0,
-    certifications: 0,
-    lastSyncedAt: nowStr,
-    syncStatus: 'CLUB_FORM_SNAPSHOT',
-    source: 'sheet-snapshot',
-    syncStatusLabel: 'CLUB FORM SNAPSHOT',
-  };
 
   // Build candidate handle list (e.g. cnwag9jss8h8w8rzm -> cnwagn9jss8h8w8rzm candidate)
   const handleCandidates: string[] = [primaryHandle];
@@ -148,6 +140,7 @@ export async function getPublicTrailblazerProfile(
             superbadges: parseNumericValue(stats.superbadgeCount),
             certifications: 0,
             lastSyncedAt: nowStr,
+            fetchedAt: now,
             syncStatus: 'VERIFIED',
             source: 'trailblazer-public-rendered',
             syncStatusLabel: `VERIFIED FROM TRAILBLAZER • ${nowStr}`,
@@ -161,7 +154,33 @@ export async function getPublicTrailblazerProfile(
     }
   }
 
-  // 4. Return snapshot fallback if live sync is unexposed or failed
-  setCachedProfile(studentId, sheetSnapshotRecord);
-  return sheetSnapshotRecord;
+  // 4. Return previously verified record if available, or unavailable status (never fake sheet scores)
+  const existingCached = getCachedProfile(studentId);
+  if (existingCached && existingCached.syncStatus === 'VERIFIED') {
+    const staleRecord: TrailblazerRecord = {
+      ...existingCached,
+      syncStatusLabel: `LAST VERIFIED • ${existingCached.lastSyncedAt}`,
+    };
+    return staleRecord;
+  }
+
+  const unavailableRecord: TrailblazerRecord = {
+    success: false,
+    studentId,
+    trailblazerProfileId: primaryHandle,
+    trailheadProfileUrl: normalizedUrl,
+    points: 0,
+    badges: 0,
+    rank: 'N/A',
+    trails: 0,
+    superbadges: 0,
+    certifications: 0,
+    lastSyncedAt: nowStr,
+    fetchedAt: now,
+    syncStatus: 'UNAVAILABLE',
+    source: 'unavailable',
+    syncStatusLabel: 'TRAILBLAZER DATA UNAVAILABLE',
+  };
+  setCachedProfile(studentId, unavailableRecord);
+  return unavailableRecord;
 }

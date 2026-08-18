@@ -9,6 +9,7 @@ import {
 
 export type { SyncStatus, TrailblazerRecord };
 export type TrailheadRecord = TrailblazerRecord;
+export { getAllCachedProfiles, getAllCachedProfiles as getAllCachedTrailheadRecords };
 
 export interface BulkSyncSummary {
   totalStudents: number;
@@ -42,10 +43,29 @@ export const syncSingleTrailheadProfile = syncSingleTrailblazerProfile;
  * Processes in small concurrent batches of 5. If one fails, execution seamlessly continues.
  */
 export async function syncAllTrailblazerProfiles(
-  forceRefresh = true,
+  studentsOrForceRefresh?: Student[] | boolean,
+  forceRefreshOrProgress?: boolean | ((syncedCount: number, totalCount: number, currentStudent?: Student) => void),
   onProgress?: (syncedCount: number, totalCount: number, currentStudent?: Student) => void
 ): Promise<BulkSyncSummary> {
-  const students = await getStudents(true);
+  let students: Student[];
+  let shouldForceRefresh = true;
+  let progressCb: ((syncedCount: number, totalCount: number, currentStudent?: Student) => void) | undefined = onProgress;
+
+  if (Array.isArray(studentsOrForceRefresh)) {
+    students = studentsOrForceRefresh;
+    if (typeof forceRefreshOrProgress === 'boolean') {
+      shouldForceRefresh = forceRefreshOrProgress;
+    }
+  } else {
+    if (typeof studentsOrForceRefresh === 'boolean') {
+      shouldForceRefresh = studentsOrForceRefresh;
+    }
+    if (typeof forceRefreshOrProgress === 'function') {
+      progressCb = forceRefreshOrProgress;
+    }
+    students = await getStudents(true);
+  }
+
   const total = students.length;
 
   let profilesFound = 0;
@@ -68,7 +88,7 @@ export async function syncAllTrailblazerProfiles(
             student.trailheadProfileLink,
             student.totalTrailheadScore,
             student.totalTrailheadBadges,
-            forceRefresh
+            shouldForceRefresh
           );
 
           if (record.trailheadProfileUrl && record.syncStatus !== 'NO_PROFILE') {
@@ -102,8 +122,8 @@ export async function syncAllTrailblazerProfiles(
     );
 
     const processedSoFar = Math.min(i + BATCH_SIZE, total);
-    if (onProgress) {
-      onProgress(processedSoFar, total, students[processedSoFar - 1]);
+    if (progressCb) {
+      progressCb(processedSoFar, total, students[processedSoFar - 1]);
     }
   }
 

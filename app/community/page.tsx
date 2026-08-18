@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { Search, ExternalLink, User, AlertTriangle } from 'lucide-react';
+import { Search, User, AlertTriangle } from 'lucide-react';
 import { Student } from '@/types';
-import { getStudents, getUniqueBranches, getUniqueYears } from '@/services/students';
+import { getStudents } from '@/services/students';
+import { syncAllTrailheadProfiles, getAllCachedTrailheadRecords, TrailblazerRecord } from '@/services/trailheadService';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -17,8 +18,18 @@ const JOIN_FORM_URL =
   process.env.NEXT_PUBLIC_JOIN_CLUB_FORM_URL ||
   'https://docs.google.com/forms/d/e/1FAIpQLSczeED3uSj-g0-_CxZUGVlzUrIh5k4QpxfUHTgZ2LekogGD8Q/viewform?usp=header';
 
+function formatYear(yearStr: string | number): string {
+  const y = String(yearStr).trim();
+  if (y === '1') return '1st Year';
+  if (y === '2') return '2nd Year';
+  if (y === '3') return '3rd Year';
+  if (y === '4') return '4th Year';
+  return `Year ${y}`;
+}
+
 export default function CommunityPage() {
   const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [cachedRecords, setCachedRecords] = useState<Record<string, TrailblazerRecord>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -34,17 +45,52 @@ export default function CommunityPage() {
     try {
       const results = await getStudents(forceRefresh);
       setAllStudents(results);
+
+      const res = await fetch('/api/trailhead/sync-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ forceRefresh }),
+      });
+
+      const json = await res.json();
+      if (json.success && json.records) {
+        setCachedRecords((prev) => {
+          const updated = { ...prev };
+          Object.keys(json.records).forEach((id) => {
+            const fresh = json.records[id];
+            const existing = prev[id];
+            if (fresh.syncStatus === 'VERIFIED' || !existing || existing.syncStatus !== 'VERIFIED') {
+              updated[id] = fresh;
+            }
+          });
+          return updated;
+        });
+      } else {
+        setCachedRecords(getAllCachedTrailheadRecords());
+      }
     } catch (err) {
       console.error('Error loading community members:', err);
-      setError(true);
+      setCachedRecords(getAllCachedTrailheadRecords());
     } finally {
-      setLoading(false); // ALWAYS leave loading state
+      setLoading(false);
     }
   };
 
   useEffect(() => {
     loadData();
   }, []);
+
+  // Compute global rank map for all students based on score
+  const studentRankMap = useMemo(() => {
+    const sorted = [...allStudents].sort((a, b) => {
+      const scoreA = cachedRecords[a.id]?.points ?? parseNumericValue(a.totalTrailheadScore);
+      const scoreB = cachedRecords[b.id]?.points ?? parseNumericValue(b.totalTrailheadScore);
+      return scoreB - scoreA;
+    });
+    const map = new Map<string, number>();
+    sorted.forEach((s, idx) => map.set(s.id, idx + 1));
+    return map;
+  }, [allStudents, cachedRecords]);
 
   // Dynamically compute unique branches & years from loaded students
   const availableBranches = useMemo(() => {
@@ -63,19 +109,21 @@ export default function CommunityPage() {
     return Array.from(set).sort();
   }, [allStudents]);
 
-  // Synchronous in-memory filtering and sorting (NEVER triggers network refetch)
+  // Filtered students list
   const filteredStudents = useMemo(() => {
     let list = [...allStudents];
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
-      list = list.filter(
-        (s) =>
+      list = list.filter((s) => {
+        const profileLink = s.trailheadProfileLink || '';
+        return (
           s.name.toLowerCase().includes(q) ||
           s.rollNo.toLowerCase().includes(q) ||
           s.branch.toLowerCase().includes(q) ||
-          (s.salesforceUsername && String(s.salesforceUsername).toLowerCase().includes(q))
-      );
+          profileLink.toLowerCase().includes(q)
+        );
+      });
     }
 
     if (branchFilter && branchFilter !== 'ALL') {
@@ -87,17 +135,20 @@ export default function CommunityPage() {
     }
 
     list.sort((a, b) => {
-      if (sortMetric === 'badges') {
-        return parseNumericValue(b.totalTrailheadBadges) - parseNumericValue(a.totalTrailheadBadges);
-      }
-      if (sortMetric === 'name') {
-        return a.name.localeCompare(b.name);
-      }
-      return parseNumericValue(b.totalTrailheadScore) - parseNumericValue(a.totalTrailheadScore);
+      const recA = cachedRecords[a.id];
+      const recB = cachedRecords[b.id];
+      const pointsA = recA?.points ?? parseNumericValue(a.totalTrailheadScore);
+      const pointsB = recB?.points ?? parseNumericValue(b.totalTrailheadScore);
+      const badgesA = recA?.badges ?? parseNumericValue(a.totalTrailheadBadges);
+      const badgesB = recB?.badges ?? parseNumericValue(b.totalTrailheadBadges);
+
+      if (sortMetric === 'badges') return badgesB - badgesA;
+      if (sortMetric === 'name') return a.name.localeCompare(b.name);
+      return pointsB - pointsA;
     });
 
     return list;
-  }, [allStudents, searchQuery, branchFilter, yearFilter, sortMetric]);
+  }, [allStudents, cachedRecords, searchQuery, branchFilter, yearFilter, sortMetric]);
 
   return (
     <div className="py-stack-lg max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop space-y-stack-md">
@@ -180,7 +231,7 @@ export default function CommunityPage() {
         <EmptyState
           icon={AlertTriangle}
           title="Unable to load community members"
-          description="A network or timeout error occurred while fetching student data from the Google Form API."
+          description="A network or timeout error occurred while fetching student directory data."
           actionText="Try Again"
           onAction={() => loadData(true)}
         />
@@ -205,57 +256,94 @@ export default function CommunityPage() {
           }}
         />
       ) : (
+        /* Grid Layout: Desktop 3/row, Tablet 2/row, Mobile 1/row */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredStudents.map((student) => (
-            <GlassCard key={student.id} className="flex flex-col justify-between space-y-4">
-              <div className="space-y-4">
-                {/* Top Info */}
-                <div className="flex items-start gap-4">
-                  <InitialsAvatar name={student.name} id={student.id} size="lg" />
-                  <div className="flex-grow min-w-0">
-                    <h3 className="font-headline text-base font-semibold text-primary truncate">
+          {filteredStudents.map((student) => {
+            const rankNum = studentRankMap.get(student.id) || 1;
+            const formattedRank = `#${String(rankNum).padStart(2, '0')}`;
+            const rec = cachedRecords[student.id];
+            const points = rec?.points ?? parseNumericValue(student.totalTrailheadScore);
+            const badges = rec?.badges ?? parseNumericValue(student.totalTrailheadBadges);
+            const rankTitle = rec?.rank || 'Explorer';
+
+            return (
+              <GlassCard
+                key={student.id}
+                className="flex flex-col justify-between space-y-4 p-5 hover:border-secondary/40 transition-all duration-200"
+              >
+                <div className="space-y-4">
+                  {/* Top: Rank Badge & Initials Avatar */}
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`text-xs font-mono font-bold px-2.5 py-1 rounded-full border ${
+                        rankNum === 1
+                          ? 'bg-amber-100 text-amber-800 border-amber-300 shadow-sm'
+                          : rankNum === 2
+                          ? 'bg-slate-100 text-slate-700 border-slate-300'
+                          : rankNum === 3
+                          ? 'bg-amber-50 text-amber-900 border-amber-200'
+                          : 'bg-surface-container-high text-on-surface-variant border-outline-variant/30'
+                      }`}
+                    >
+                      {formattedRank}
+                    </span>
+                    <InitialsAvatar name={student.name} id={student.id} size="md" />
+                  </div>
+
+                  {/* Student Details */}
+                  <div>
+                    <h3 className="font-headline text-base font-bold text-primary truncate leading-snug">
                       {student.name}
                     </h3>
-                    <p className="font-sans text-xs text-outline font-mono">{student.rollNo}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Badge variant="outline">{student.branch}</Badge>
-                      <span className="text-xs font-sans text-on-surface-variant">
-                        Year {student.year}
-                      </span>
+                    <p className="font-sans text-xs text-outline font-mono mt-0.5">{student.rollNo}</p>
+                    <p className="font-sans text-xs text-on-surface-variant font-medium mt-1">
+                      {student.branch} • {formatYear(student.year)}
+                    </p>
+                  </div>
+
+                  {/* Trailhead Stats */}
+                  <div className="grid grid-cols-2 gap-2 bg-surface-container-low/70 p-3 rounded-xl border border-outline-variant/20">
+                    <div>
+                      <div className="font-headline font-bold text-base text-primary">
+                        {formatNumber(points)}
+                      </div>
+                      <div className="text-[10px] text-outline font-label uppercase font-semibold">
+                        Trailhead Points
+                      </div>
                     </div>
+                    <div>
+                      <div className="font-headline font-bold text-base text-secondary">
+                        {formatNumber(badges)}
+                      </div>
+                      <div className="text-[10px] text-outline font-label uppercase font-semibold">
+                        Badges
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Trailblazer Rank */}
+                  <div className="flex items-center justify-between px-1 text-xs">
+                    <span className="text-outline font-label text-[11px] uppercase font-semibold">
+                      Trailblazer Rank
+                    </span>
+                    <span className="font-headline font-bold text-secondary text-xs uppercase tracking-wide">
+                      {rankTitle}
+                    </span>
                   </div>
                 </div>
 
-                {/* Trailhead Stats Grid */}
-                <div className="grid grid-cols-2 gap-2 bg-surface-container-low p-3 rounded-lg text-center">
-                  <div>
-                    <div className="font-headline font-bold text-base text-primary">
-                      {formatNumber(student.totalTrailheadScore)}
-                    </div>
-                    <div className="text-[10px] text-outline uppercase font-label">Trailhead Score</div>
-                  </div>
-                  <div>
-                    <div className="font-headline font-bold text-base text-secondary">
-                      {formatNumber(student.totalTrailheadBadges)}
-                    </div>
-                    <div className="text-[10px] text-outline uppercase font-label">Badges</div>
-                  </div>
+                {/* View Profile Action */}
+                <div className="pt-3 border-t border-outline-variant/20">
+                  <Link href={`/community/${student.id}`} className="w-full block">
+                    <Button variant="outline" size="sm" className="w-full justify-between group">
+                      <span>View Profile</span>
+                      <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                    </Button>
+                  </Link>
                 </div>
-              </div>
-
-              {/* Action */}
-              <div className="pt-2 border-t border-outline-variant/20 flex items-center justify-between">
-                <span className="text-xs text-on-surface-variant font-sans">
-                  {student.section ? `Section ${student.section}` : 'CMRTC'}
-                </span>
-                <Link href={`/community/${student.id}`}>
-                  <Button variant="ghost" size="sm" icon={<ExternalLink className="w-3.5 h-3.5 ml-1" />}>
-                    View Profile →
-                  </Button>
-                </Link>
-              </div>
-            </GlassCard>
-          ))}
+              </GlassCard>
+            );
+          })}
         </div>
       )}
     </div>

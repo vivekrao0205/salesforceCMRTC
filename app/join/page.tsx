@@ -36,7 +36,7 @@ export default function JoinPage() {
               <CheckCircle2 className="w-4 h-4 text-secondary shrink-0" /> Full Name & Roll Number
             </li>
             <li className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-secondary shrink-0" /> Branch, Year & Section
+              <CheckCircle2 className="w-4 h-4 text-secondary shrink-0" /> Branch & Year
             </li>
             <li className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-secondary shrink-0" /> Trailhead Profile Link
@@ -50,13 +50,13 @@ export default function JoinPage() {
         <div className="pt-4">
           <a href={JOIN_FORM_URL} target="_blank" rel="noopener noreferrer">
             <Button variant="primary" size="lg" icon={<ArrowRight className="w-5 h-5 ml-1" />}>
-              Open Official Google Registration Form
+              Open Registration Form
             </Button>
           </a>
         </div>
 
         <p className="text-xs font-sans text-outline">
-          Your Google Form submission automatically populates Google Sheets & syncs directly to the website community directory and leaderboard.
+          Your registration details sync directly to the website community directory and leaderboard.
         </p>
       </GlassCard>
     </div>
