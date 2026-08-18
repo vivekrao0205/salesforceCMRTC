@@ -1,0 +1,34 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
+
+:root {
+  --font-hanken-grotesk: 'Hanken Grotesk', sans-serif;
+  --font-plus-jakarta-sans: 'Plus Jakarta Sans', sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-on-background font-sans antialiased min-h-screen flex flex-col selection:bg-secondary-fixed selection:text-on-secondary-fixed;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-headline tracking-tight text-primary;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-surface-container-lowest/80 backdrop-blur-md border border-outline-variant/30;
+  }
+
+  .ambient-shadow {
+    box-shadow: 0 24px 32px -12px rgba(0, 25, 59, 0.05);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
