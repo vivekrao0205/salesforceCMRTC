@@ -29,33 +29,35 @@ import { formatNumber } from '@/lib/utils';
 function LeaderboardPageContent() {
   const [students, setStudents] = useState<Student[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [syncingProgress, setSyncingProgress] = useState<{ synced: number; total: number } | null>(null);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('ALL');
   const [selectedYear, setSelectedYear] = useState('ALL');
   const [activeTab, setActiveTab] = useState<'points' | 'badges' | 'rank' | 'superbadges'>('points');
 
-  const { records, isSyncing } = useTrailblazerStore();
+  const { records, isSyncing, syncAllBatch } = useTrailblazerStore();
 
   const loadData = async (forceRefresh = false) => {
-    if (!forceRefresh && students.length > 0) return;
-    setInitialLoading(true);
-    try {
-      // 1. Fetch registered student list immediately
-      const data = await getStudents(forceRefresh);
-      setStudents(data);
-      setInitialLoading(false); // Render student rows immediately
+    if (forceRefresh) {
+      setIsManualSyncing(true);
+    } else {
+      setInitialLoading(true);
+    }
 
-      // 2. Hydrate Trailblazer data progressively in background with controlled batching
-      trailblazerStore.fetchBatch(data, forceRefresh, (synced, total) => {
-        setSyncingProgress({ synced, total });
-        if (synced >= total) {
-          setTimeout(() => setSyncingProgress(null), 2500);
-        }
-      });
+    try {
+      // 1. Fetch registered student directory
+      const data = await getStudents(forceRefresh);
+
+      // 2. Perform synchronized batch loading before updating UI state
+      await syncAllBatch(data, forceRefresh);
+
+      // 3. Single coordinated state update once batch process completes
+      setStudents(data);
     } catch (err) {
       console.error('Error in Leaderboard synchronization:', err);
+    } finally {
       setInitialLoading(false);
+      setIsManualSyncing(false);
     }
   };
 
@@ -174,19 +176,11 @@ function LeaderboardPageContent() {
         <Button
           variant="outline"
           size="sm"
-          disabled={initialLoading || !!syncingProgress}
+          disabled={initialLoading || isManualSyncing}
           onClick={() => loadData(true)}
-          icon={
-            syncingProgress ? (
-              <RefreshCw className="w-3.5 h-3.5 ml-1 animate-spin" />
-            ) : (
-              <RefreshCw className="w-3.5 h-3.5 ml-1" />
-            )
-          }
+          icon={<RefreshCw className={`w-3.5 h-3.5 ml-1 ${isManualSyncing ? 'animate-spin' : ''}`} />}
         >
-          {syncingProgress
-            ? `Syncing (${syncingProgress.synced}/${syncingProgress.total})...`
-            : 'Sync All Trailblazer'}
+          {isManualSyncing ? 'Syncing Trailblazer data...' : 'Sync All Trailblazer'}
         </Button>
       </div>
 
@@ -273,17 +267,19 @@ function LeaderboardPageContent() {
         </div>
       </GlassCard>
 
-      {/* Leaderboard Table / Loading State */}
+      {/* Leaderboard Table / Single Coordinated Loading State */}
       {initialLoading ? (
-        <GlassCard className="p-12 text-center space-y-4">
-          <div className="inline-flex items-center justify-center gap-3 text-sm text-secondary font-headline font-semibold">
-            <RefreshCw className="w-5 h-5 animate-spin text-secondary" />
-            <span>Loading member directory...</span>
+        <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center space-y-4 my-8">
+          <div className="w-12 h-12 rounded-full border-4 border-blue-200 border-t-[#0B63F6] animate-spin mx-auto" />
+          <div className="space-y-1">
+            <h3 className="font-headline text-lg font-bold text-[#062B5C]">
+              Loading Trailblazer data...
+            </h3>
+            <p className="text-xs text-slate-500 font-sans">
+              Synchronizing student profiles
+            </p>
           </div>
-          <p className="text-xs text-outline max-w-sm mx-auto">
-            Retrieving student registry before synchronizing live Trailblazer rankings.
-          </p>
-        </GlassCard>
+        </div>
       ) : filteredAndRanked.length === 0 ? (
         <GlassCard className="p-12 text-center space-y-3">
           <Trophy className="w-10 h-10 text-outline mx-auto" />

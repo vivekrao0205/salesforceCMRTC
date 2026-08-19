@@ -31,10 +31,11 @@ function formatYear(yearStr: string | number): string {
 function CommunityPageContent() {
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [error, setError] = useState(false);
-  const [syncingProgress, setSyncingProgress] = useState<{ synced: number; total: number } | null>(null);
 
-  const { records, isSyncing } = useTrailblazerStore();
+  const { records, isSyncing, syncAllBatch } = useTrailblazerStore();
+
 
   // Search & Filter local UI states
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,31 +44,33 @@ function CommunityPageContent() {
   const [sortMetric, setSortMetric] = useState<'score' | 'badges' | 'name'>('score');
 
   const loadData = async (forceRefresh = false) => {
-    if (!forceRefresh && allStudents.length > 0) return;
-    setInitialLoading(true);
+    if (forceRefresh) {
+      setIsManualSyncing(true);
+    } else {
+      setInitialLoading(true);
+    }
     setError(false);
-    try {
-      // 1. Fetch registered student records immediately
-      const results = await getStudents(forceRefresh);
-      setAllStudents(results);
-      setInitialLoading(false); // Immediately render student list
 
-      // 2. Hydrate Trailblazer data progressively in background with controlled batching
-      trailblazerStore.fetchBatch(results, forceRefresh, (synced, total) => {
-        setSyncingProgress({ synced, total });
-        if (synced >= total) {
-          setTimeout(() => setSyncingProgress(null), 2500);
-        }
-      });
+    try {
+      // 1. Fetch registered student directory
+      const results = await getStudents(forceRefresh);
+      
+      // 2. Perform synchronized batch loading before updating UI state
+      await syncAllBatch(results, forceRefresh);
+      
+      // 3. Single coordinated state update once batch process completes
+      setAllStudents(results);
     } catch (err) {
       console.error('Error loading community members:', err);
       setError(true);
+    } finally {
       setInitialLoading(false);
+      setIsManualSyncing(false);
     }
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, []);
 
   // Compute global rank map for all students based on score
@@ -156,13 +159,11 @@ function CommunityPageContent() {
         <Button
           variant="outline"
           size="sm"
-          disabled={!!syncingProgress}
+          disabled={isManualSyncing || initialLoading}
           onClick={() => loadData(true)}
-          icon={<RefreshCw className={`w-3.5 h-3.5 ml-1 ${syncingProgress ? 'animate-spin' : ''}`} />}
+          icon={<RefreshCw className={`w-3.5 h-3.5 ml-1 ${isManualSyncing ? 'animate-spin' : ''}`} />}
         >
-          {syncingProgress
-            ? `Syncing (${syncingProgress.synced}/${syncingProgress.total})...`
-            : 'Sync All Trailblazer'}
+          {isManualSyncing ? 'Syncing Trailblazer data...' : 'Sync All Trailblazer'}
         </Button>
       </div>
 
@@ -220,15 +221,18 @@ function CommunityPageContent() {
         </div>
       </GlassCard>
 
-      {/* State Machine Rendering */}
+      {/* Single Coordinated Loading Experience */}
       {initialLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
+        <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200 shadow-sm text-center space-y-4 my-8">
+          <div className="w-12 h-12 rounded-full border-4 border-blue-200 border-t-[#0B63F6] animate-spin mx-auto" />
+          <div className="space-y-1">
+            <h3 className="font-headline text-lg font-bold text-[#062B5C]">
+              Loading Trailblazer data...
+            </h3>
+            <p className="text-xs text-slate-500 font-sans">
+              Synchronizing student profiles
+            </p>
+          </div>
         </div>
       ) : error ? (
         <EmptyState

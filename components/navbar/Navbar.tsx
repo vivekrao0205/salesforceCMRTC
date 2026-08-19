@@ -18,7 +18,7 @@ export const Navbar: React.FC = () => {
   const navLinks = [
     { name: 'Home', href: '/' },
     { name: 'About', href: '/about' },
-    { name: 'Community', href: '/community' },
+    { name: 'Club', href: '/community' },
     { name: 'Leaderboard', href: '/leaderboard' },
     { name: 'Events', href: '/events' },
     { name: 'Resources', href: '/resources' },
@@ -30,35 +30,46 @@ export const Navbar: React.FC = () => {
   };
 
   return (
-    <header className="fixed top-0 w-full z-50 bg-surface/95 backdrop-blur-md border-b border-outline-variant/30 shadow-sm transition-all duration-300">
-      <div className="flex justify-between items-center h-20 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto">
+    <header className="fixed top-0 w-full z-50 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs transition-all duration-300">
+      <div className="flex justify-between items-center h-16 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto">
         {/* Brand Logo & Name */}
         <Link href="/" className="flex items-center gap-3 focus:outline-none rounded-lg group">
+          {/* CMR Technical Campus Official Logo */}
+          <div className="relative h-10 w-auto overflow-hidden bg-white p-0.5 rounded flex items-center justify-center">
+            <Image
+              src="/images/cmrtc-logo.png"
+              alt="CMR Technical Campus Logo"
+              width={42}
+              height={42}
+              className="object-contain h-full w-auto"
+              priority
+            />
+          </div>
+
+          {/* Subtle Vertical Divider */}
+          <div className="h-7 w-px bg-slate-200 hidden sm:block" />
+
+          {/* Salesforce Club Badge & Stacked Text */}
           <div className="flex items-center gap-2">
-            <div className="relative w-10 h-10 overflow-hidden rounded-full border border-outline-variant/30 shadow-sm group-hover:scale-105 transition-transform duration-300 bg-white flex items-center justify-center p-0.5">
+            <div className="relative w-9 h-9 overflow-hidden rounded-full border border-slate-200 shadow-sm group-hover:scale-105 transition-transform duration-300 bg-white flex items-center justify-center p-0.5">
               <Image
                 src="/images/logo.png"
                 alt="Salesforce Club CMRTC Logo"
-                width={40}
-                height={40}
+                width={36}
+                height={36}
                 className="object-contain w-full h-full"
                 priority
               />
             </div>
-            <div className="relative h-9 w-auto hidden lg:block overflow-hidden rounded bg-white p-0.5 border border-outline-variant/20 shadow-sm">
-              <Image
-                src="/images/cmrtc-logo.png"
-                alt="CMR Technical Campus Logo"
-                width={36}
-                height={36}
-                className="object-contain h-full w-auto"
-                priority
-              />
+            <div className="flex flex-col leading-tight">
+              <span className="font-headline text-sm font-bold text-[#062B5C] group-hover:text-[#0B63F6] transition-colors">
+                Salesforce Club
+              </span>
+              <span className="font-headline text-xs font-extrabold text-[#0B63F6] tracking-wider uppercase">
+                CMRTC
+              </span>
             </div>
           </div>
-          <span className="font-headline text-headline-sm font-bold text-primary tracking-tight hidden sm:block group-hover:text-secondary transition-colors">
-            Salesforce Club CMRTC
-          </span>
         </Link>
 
         {/* Desktop Navigation Links */}

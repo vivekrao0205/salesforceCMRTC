@@ -45,6 +45,37 @@ class TrailblazerStore {
     this.notify();
   }
 
+  public setRecordsBatch(recordsMap: Record<string, TrailblazerRecord>) {
+    Object.entries(recordsMap).forEach(([id, record]) => {
+      this.records.set(id, record);
+      this.syncingIds.delete(id);
+    });
+    this.notify();
+  }
+
+  public async syncAllBatch(
+    students: Student[],
+    forceRefresh = false
+  ): Promise<Record<string, TrailblazerRecord>> {
+    try {
+      const res = await fetch('/api/trailhead/sync-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ forceRefresh }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.records) {
+          this.setRecordsBatch(json.records);
+          return json.records;
+        }
+      }
+    } catch (err) {
+      console.warn('Batch sync via API failed:', err);
+    }
+    return this.getAllRecords();
+  }
+
   public async fetchSingle(
     studentId: string,
     profileUrl?: string,
@@ -150,5 +181,10 @@ export function useTrailblazerStore() {
       trailblazerStore.fetchSingle(id, profileUrl, forceRefresh),
     fetchBatch: (students: Student[], forceRefresh?: boolean, onProgress?: (s: number, t: number) => void) =>
       trailblazerStore.fetchBatch(students, forceRefresh, onProgress),
+    syncAllBatch: (students: Student[], forceRefresh?: boolean) =>
+      trailblazerStore.syncAllBatch(students, forceRefresh),
+    setRecordsBatch: (records: Record<string, TrailblazerRecord>) =>
+      trailblazerStore.setRecordsBatch(records),
   };
 }
+
