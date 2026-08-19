@@ -22,6 +22,15 @@ export const Footer: React.FC = () => {
                 className="object-contain w-full h-full"
               />
             </div>
+            <div className="relative h-8 w-auto bg-white p-0.5 rounded border border-outline-variant/20 flex items-center justify-center">
+              <Image
+                src="/images/cmrtc-logo.png"
+                alt="CMR Technical Campus Logo"
+                width={32}
+                height={32}
+                className="object-contain h-full w-auto"
+              />
+            </div>
             <span className="font-headline text-lg font-bold text-on-primary">
               Salesforce Club CMRTC
             </span>
@@ -57,7 +66,7 @@ export const Footer: React.FC = () => {
         {/* Resources & Join */}
         <div className="flex flex-col gap-2 text-xs">
           <h4 className="font-label uppercase tracking-wider font-semibold text-secondary-fixed mb-1">
-            Portals & Form
+            Portals & Registration
           </h4>
           <Link href="/resources" className="text-primary-fixed-dim hover:text-on-primary transition-colors">
             Resources
@@ -68,7 +77,7 @@ export const Footer: React.FC = () => {
             rel="noopener noreferrer"
             className="text-secondary-fixed font-semibold hover:text-on-primary transition-colors"
           >
-            Join the Club (Google Form)
+            Join the Club
           </a>
           <Link href="/login" className="text-primary-fixed-dim hover:text-on-primary transition-colors">
             Coordinator Portal
@@ -84,3 +93,4 @@ export const Footer: React.FC = () => {
     </footer>
   );
 };
+

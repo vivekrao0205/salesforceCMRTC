@@ -4,7 +4,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { 
   Trophy, 
-  Award, 
   Medal, 
   Search, 
   Filter, 
@@ -19,70 +18,44 @@ import {
 } from 'lucide-react';
 import { Student } from '@/types';
 import { getStudents } from '@/services/students';
-import { getAllCachedTrailheadRecords, TrailblazerRecord } from '@/services/trailheadService';
+import { useTrailblazerStore, trailblazerStore } from '@/lib/trailblazerStore';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { InitialsAvatar } from '@/components/ui/InitialsAvatar';
 import { formatNumber } from '@/lib/utils';
 
-export default function LeaderboardPage() {
+function LeaderboardPageContent() {
   const [students, setStudents] = useState<Student[]>([]);
-  const [cachedRecords, setCachedRecords] = useState<Record<string, TrailblazerRecord>>({});
-  const [loading, setLoading] = useState(true);
-  const [syncStatusState, setSyncStatusState] = useState<'idle' | 'syncing' | 'complete'>('idle');
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [syncingProgress, setSyncingProgress] = useState<{ synced: number; total: number } | null>(null);
   const [search, setSearch] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('ALL');
   const [selectedYear, setSelectedYear] = useState('ALL');
   const [activeTab, setActiveTab] = useState<'points' | 'badges' | 'rank' | 'superbadges'>('points');
 
-  const loadData = async (forceRefresh = false) => {
-    if (forceRefresh) {
-      setSyncStatusState('syncing');
-    } else {
-      setLoading(true);
-    }
+  const { records, isSyncing } = useTrailblazerStore();
 
+  const loadData = async (forceRefresh = false) => {
+    if (!forceRefresh && students.length > 0) return;
+    setInitialLoading(true);
     try {
-      // 1. Fetch registered student list
+      // 1. Fetch registered student list immediately
       const data = await getStudents(forceRefresh);
       setStudents(data);
+      setInitialLoading(false); // Render student rows immediately
 
-      // 2. Execute server-side Trailblazer synchronization engine to bypass browser CORS
-      const res = await fetch('/api/trailhead/sync-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ forceRefresh }),
+      // 2. Hydrate Trailblazer data progressively in background with controlled batching
+      trailblazerStore.fetchBatch(data, forceRefresh, (synced, total) => {
+        setSyncingProgress({ synced, total });
+        if (synced >= total) {
+          setTimeout(() => setSyncingProgress(null), 2500);
+        }
       });
-
-      const json = await res.json();
-      if (json.success && json.records) {
-        setCachedRecords((prev) => {
-          const updated = { ...prev };
-          Object.keys(json.records).forEach((studentId) => {
-            const fresh = json.records[studentId];
-            const existing = prev[studentId];
-            // Rule: NEVER replace valid live data with zero/unavailable due to transient error
-            if (fresh.syncStatus === 'VERIFIED' || !existing || existing.syncStatus !== 'VERIFIED') {
-              updated[studentId] = fresh;
-            }
-          });
-          return updated;
-        });
-      } else {
-        setCachedRecords(getAllCachedTrailheadRecords());
-      }
-
-      if (forceRefresh) {
-        setSyncStatusState('complete');
-        setTimeout(() => setSyncStatusState('idle'), 3000);
-      }
     } catch (err) {
       console.error('Error in Leaderboard synchronization:', err);
-      setCachedRecords(getAllCachedTrailheadRecords());
-      if (forceRefresh) setSyncStatusState('idle');
-    } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   };
 
@@ -93,23 +66,23 @@ export default function LeaderboardPage() {
   // Filter & Rank Pipeline — Driven strictly by synchronized Trailblazer records
   const filteredAndRanked = useMemo(() => {
     let list = students.map((s) => {
-      const rec = cachedRecords[s.id];
-      const hasNoProfile = !s.trailheadProfileLink || !s.trailheadProfileLink.trim() || rec?.syncStatus === 'NO_PROFILE' || rec?.syncStatus === 'INVALID_URL';
+      const rec = records[s.id];
+      const isStudentSyncing = isSyncing(s.id);
+      const hasNoProfile = !s.trailheadProfileLink || !s.trailheadProfileLink.trim();
+      
       const isVerified = rec?.syncStatus === 'VERIFIED';
       const isPrivate = rec?.syncStatus === 'PRIVATE';
-      const isUnavailable = hasNoProfile || rec?.syncStatus === 'UNAVAILABLE' || rec?.syncStatus === 'FAILED';
+      const isUnavailable =
+        hasNoProfile ||
+        rec?.syncStatus === 'NO_PROFILE' ||
+        rec?.syncStatus === 'INVALID_URL' ||
+        rec?.syncStatus === 'UNAVAILABLE' ||
+        rec?.syncStatus === 'FAILED';
 
-      const points = hasNoProfile ? 0 : (rec?.points ?? 0);
-      const badges = hasNoProfile ? 0 : (rec?.badges ?? 0);
-      const rank = hasNoProfile ? 'N/A' : (rec?.rank || 'Explorer');
-      const superbadges = hasNoProfile ? 0 : (rec?.superbadges ?? 0);
-      const statusLabel = isVerified
-        ? 'VERIFIED FROM TRAILBLAZER'
-        : isPrivate
-        ? 'PRIVATE'
-        : isUnavailable
-        ? 'TRAILBLAZER DATA UNAVAILABLE'
-        : 'LAST VERIFIED';
+      const points = rec?.points ?? 0;
+      const badges = rec?.badges ?? 0;
+      const rank = isUnavailable ? 'N/A' : (rec?.rank || 'Explorer');
+      const superbadges = rec?.superbadges ?? 0;
 
       return {
         student: s,
@@ -117,10 +90,11 @@ export default function LeaderboardPage() {
         badges,
         rank,
         superbadges,
-        statusLabel,
         isVerified,
         isPrivate,
         isUnavailable,
+        isStudentSyncing,
+        hasRecord: !!rec,
       };
     });
 
@@ -149,7 +123,6 @@ export default function LeaderboardPage() {
     list.sort((a, b) => {
       if (activeTab === 'badges') return b.badges - a.badges;
       if (activeTab === 'superbadges') return b.superbadges - a.superbadges;
-      if (activeTab === 'rank') return b.points - a.points;
       return b.points - a.points;
     });
 
@@ -171,7 +144,7 @@ export default function LeaderboardPage() {
       }
       return { ...item, compRank: currentRank };
     });
-  }, [students, cachedRecords, search, selectedBranch, selectedYear, activeTab]);
+  }, [students, records, isSyncing, search, selectedBranch, selectedYear, activeTab]);
 
   const uniqueBranches = useMemo(() => {
     const set = new Set<string>();
@@ -201,22 +174,18 @@ export default function LeaderboardPage() {
         <Button
           variant="outline"
           size="sm"
-          disabled={loading || syncStatusState === 'syncing'}
+          disabled={initialLoading || !!syncingProgress}
           onClick={() => loadData(true)}
           icon={
-            syncStatusState === 'syncing' ? (
+            syncingProgress ? (
               <RefreshCw className="w-3.5 h-3.5 ml-1 animate-spin" />
-            ) : syncStatusState === 'complete' ? (
-              <CheckCircle2 className="w-3.5 h-3.5 ml-1 text-green-600" />
             ) : (
               <RefreshCw className="w-3.5 h-3.5 ml-1" />
             )
           }
         >
-          {syncStatusState === 'syncing'
-            ? 'Syncing All Profiles...'
-            : syncStatusState === 'complete'
-            ? 'Sync Complete'
+          {syncingProgress
+            ? `Syncing (${syncingProgress.synced}/${syncingProgress.total})...`
             : 'Sync All Trailblazer'}
         </Button>
       </div>
@@ -305,14 +274,14 @@ export default function LeaderboardPage() {
       </GlassCard>
 
       {/* Leaderboard Table / Loading State */}
-      {loading ? (
+      {initialLoading ? (
         <GlassCard className="p-12 text-center space-y-4">
           <div className="inline-flex items-center justify-center gap-3 text-sm text-secondary font-headline font-semibold">
             <RefreshCw className="w-5 h-5 animate-spin text-secondary" />
-            <span>Syncing Trailblazer data...</span>
+            <span>Loading member directory...</span>
           </div>
           <p className="text-xs text-outline max-w-sm mx-auto">
-            Synchronizing live Trailblazer profiles and rank scores for all registered members.
+            Retrieving student registry before synchronizing live Trailblazer rankings.
           </p>
         </GlassCard>
       ) : filteredAndRanked.length === 0 ? (
@@ -385,17 +354,33 @@ export default function LeaderboardPage() {
 
                     {/* Points */}
                     <td className="py-3.5 px-4 text-right font-bold text-primary">
-                      {item.isUnavailable ? '—' : formatNumber(item.points)}
+                      {item.isUnavailable ? (
+                        '—'
+                      ) : item.hasRecord ? (
+                        formatNumber(item.points)
+                      ) : (
+                        <span className="inline-block w-12 h-4 bg-surface-container-high animate-pulse rounded" />
+                      )}
                     </td>
 
                     {/* Badges */}
                     <td className="py-3.5 px-4 text-right text-secondary font-bold">
-                      {item.isUnavailable ? '—' : formatNumber(item.badges)}
+                      {item.isUnavailable ? (
+                        '—'
+                      ) : item.hasRecord ? (
+                        formatNumber(item.badges)
+                      ) : (
+                        <span className="inline-block w-8 h-4 bg-surface-container-high animate-pulse rounded" />
+                      )}
                     </td>
 
                     {/* Status Badge */}
                     <td className="py-3.5 px-4 text-right">
-                      {item.isVerified ? (
+                      {item.isStudentSyncing ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-label font-medium border border-blue-200 animate-pulse">
+                          <RefreshCw className="w-3 h-3 animate-spin text-blue-600" /> SYNCING
+                        </span>
+                      ) : item.isVerified ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 text-[10px] font-label font-medium border border-green-200">
                           <ShieldCheck className="w-3 h-3 text-green-600" /> VERIFIED FROM TRAILBLAZER
                         </span>
@@ -423,3 +408,12 @@ export default function LeaderboardPage() {
     </div>
   );
 }
+
+export default function LeaderboardPage() {
+  return (
+    <ErrorBoundary fallbackTitle="Leaderboard Error">
+      <LeaderboardPageContent />
+    </ErrorBoundary>
+  );
+}
+

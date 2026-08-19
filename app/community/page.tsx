@@ -2,17 +2,18 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { Search, User, AlertTriangle } from 'lucide-react';
+import { Search, User, AlertTriangle, ShieldCheck, Clock, Lock, RefreshCw } from 'lucide-react';
 import { Student } from '@/types';
 import { getStudents } from '@/services/students';
-import { syncAllTrailheadProfiles, getAllCachedTrailheadRecords, TrailblazerRecord } from '@/services/trailheadService';
+import { useTrailblazerStore, trailblazerStore } from '@/lib/trailblazerStore';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonCard } from '@/components/ui/SkeletonLoader';
 import { InitialsAvatar } from '@/components/ui/InitialsAvatar';
-import { formatNumber, parseNumericValue } from '@/lib/utils';
+import { formatNumber } from '@/lib/utils';
 
 const JOIN_FORM_URL =
   process.env.NEXT_PUBLIC_JOIN_CLUB_FORM_URL ||
@@ -27,11 +28,13 @@ function formatYear(yearStr: string | number): string {
   return `Year ${y}`;
 }
 
-export default function CommunityPage() {
+function CommunityPageContent() {
   const [allStudents, setAllStudents] = useState<Student[]>([]);
-  const [cachedRecords, setCachedRecords] = useState<Record<string, TrailblazerRecord>>({});
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [syncingProgress, setSyncingProgress] = useState<{ synced: number; total: number } | null>(null);
+
+  const { records, isSyncing } = useTrailblazerStore();
 
   // Search & Filter local UI states
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,39 +43,26 @@ export default function CommunityPage() {
   const [sortMetric, setSortMetric] = useState<'score' | 'badges' | 'name'>('score');
 
   const loadData = async (forceRefresh = false) => {
-    setLoading(true);
+    if (!forceRefresh && allStudents.length > 0) return;
+    setInitialLoading(true);
     setError(false);
     try {
+      // 1. Fetch registered student records immediately
       const results = await getStudents(forceRefresh);
       setAllStudents(results);
+      setInitialLoading(false); // Immediately render student list
 
-      const res = await fetch('/api/trailhead/sync-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ forceRefresh }),
+      // 2. Hydrate Trailblazer data progressively in background with controlled batching
+      trailblazerStore.fetchBatch(results, forceRefresh, (synced, total) => {
+        setSyncingProgress({ synced, total });
+        if (synced >= total) {
+          setTimeout(() => setSyncingProgress(null), 2500);
+        }
       });
-
-      const json = await res.json();
-      if (json.success && json.records) {
-        setCachedRecords((prev) => {
-          const updated = { ...prev };
-          Object.keys(json.records).forEach((id) => {
-            const fresh = json.records[id];
-            const existing = prev[id];
-            if (fresh.syncStatus === 'VERIFIED' || !existing || existing.syncStatus !== 'VERIFIED') {
-              updated[id] = fresh;
-            }
-          });
-          return updated;
-        });
-      } else {
-        setCachedRecords(getAllCachedTrailheadRecords());
-      }
     } catch (err) {
       console.error('Error loading community members:', err);
-      setCachedRecords(getAllCachedTrailheadRecords());
-    } finally {
-      setLoading(false);
+      setError(true);
+      setInitialLoading(false);
     }
   };
 
@@ -83,14 +73,14 @@ export default function CommunityPage() {
   // Compute global rank map for all students based on score
   const studentRankMap = useMemo(() => {
     const sorted = [...allStudents].sort((a, b) => {
-      const scoreA = cachedRecords[a.id]?.points ?? parseNumericValue(a.totalTrailheadScore);
-      const scoreB = cachedRecords[b.id]?.points ?? parseNumericValue(b.totalTrailheadScore);
+      const scoreA = records[a.id]?.points ?? 0;
+      const scoreB = records[b.id]?.points ?? 0;
       return scoreB - scoreA;
     });
     const map = new Map<string, number>();
     sorted.forEach((s, idx) => map.set(s.id, idx + 1));
     return map;
-  }, [allStudents, cachedRecords]);
+  }, [allStudents, records]);
 
   // Dynamically compute unique branches & years from loaded students
   const availableBranches = useMemo(() => {
@@ -135,12 +125,12 @@ export default function CommunityPage() {
     }
 
     list.sort((a, b) => {
-      const recA = cachedRecords[a.id];
-      const recB = cachedRecords[b.id];
-      const pointsA = recA?.points ?? parseNumericValue(a.totalTrailheadScore);
-      const pointsB = recB?.points ?? parseNumericValue(b.totalTrailheadScore);
-      const badgesA = recA?.badges ?? parseNumericValue(a.totalTrailheadBadges);
-      const badgesB = recB?.badges ?? parseNumericValue(b.totalTrailheadBadges);
+      const recA = records[a.id];
+      const recB = records[b.id];
+      const pointsA = recA?.points ?? 0;
+      const pointsB = recB?.points ?? 0;
+      const badgesA = recA?.badges ?? 0;
+      const badgesB = recB?.badges ?? 0;
 
       if (sortMetric === 'badges') return badgesB - badgesA;
       if (sortMetric === 'name') return a.name.localeCompare(b.name);
@@ -148,19 +138,32 @@ export default function CommunityPage() {
     });
 
     return list;
-  }, [allStudents, cachedRecords, searchQuery, branchFilter, yearFilter, sortMetric]);
+  }, [allStudents, records, searchQuery, branchFilter, yearFilter, sortMetric]);
 
   return (
     <div className="py-stack-lg max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop space-y-stack-md">
       {/* Page Header */}
-      <div className="space-y-3">
-        <Badge variant="secondary">Student Directory</Badge>
-        <h1 className="font-headline text-headline-lg-mobile md:text-headline-lg text-primary">
-          Meet the Community
-        </h1>
-        <p className="font-sans text-body-lg text-on-surface-variant max-w-2xl">
-          Search student profiles, explore Trailhead achievements, and connect with fellow Salesforce learners across CMRTC.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-2">
+          <Badge variant="secondary">Student Directory</Badge>
+          <h1 className="font-headline text-headline-lg-mobile md:text-headline-lg text-primary">
+            Meet the Community
+          </h1>
+          <p className="font-sans text-body-lg text-on-surface-variant max-w-2xl">
+            Search student profiles, explore Trailhead achievements, and connect with fellow Salesforce learners across CMRTC.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!!syncingProgress}
+          onClick={() => loadData(true)}
+          icon={<RefreshCw className={`w-3.5 h-3.5 ml-1 ${syncingProgress ? 'animate-spin' : ''}`} />}
+        >
+          {syncingProgress
+            ? `Syncing (${syncingProgress.synced}/${syncingProgress.total})...`
+            : 'Sync All Trailblazer'}
+        </Button>
       </div>
 
       {/* Search & Filter Controls */}
@@ -172,7 +175,7 @@ export default function CommunityPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by student name, roll number, branch, or Trailhead profile..."
+            placeholder="Search by student name, roll number, branch, or profile..."
             className="w-full pl-10 pr-4 py-2.5 bg-surface-container-low border border-outline-variant/30 rounded-lg text-on-surface focus:outline-none focus:ring-2 focus:ring-secondary text-sm"
           />
         </div>
@@ -218,7 +221,7 @@ export default function CommunityPage() {
       </GlassCard>
 
       {/* State Machine Rendering */}
-      {loading ? (
+      {initialLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           <SkeletonCard />
           <SkeletonCard />
@@ -256,15 +259,26 @@ export default function CommunityPage() {
           }}
         />
       ) : (
-        /* Grid Layout: Desktop 3/row, Tablet 2/row, Mobile 1/row */
+        /* Grid Layout: Progressive Hydration Cards */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredStudents.map((student) => {
             const rankNum = studentRankMap.get(student.id) || 1;
             const formattedRank = `#${String(rankNum).padStart(2, '0')}`;
-            const rec = cachedRecords[student.id];
-            const points = rec?.points ?? parseNumericValue(student.totalTrailheadScore);
-            const badges = rec?.badges ?? parseNumericValue(student.totalTrailheadBadges);
-            const rankTitle = rec?.rank || 'Explorer';
+            const rec = records[student.id];
+            const isStudentSyncing = isSyncing(student.id);
+
+            const isVerified = rec?.syncStatus === 'VERIFIED';
+            const isPrivate = rec?.syncStatus === 'PRIVATE';
+            const isUnavailable =
+              !student.trailheadProfileLink ||
+              !student.trailheadProfileLink.trim() ||
+              rec?.syncStatus === 'NO_PROFILE' ||
+              rec?.syncStatus === 'INVALID_URL' ||
+              rec?.syncStatus === 'UNAVAILABLE';
+
+            const pointsDisplay = isUnavailable ? '—' : rec ? formatNumber(rec.points) : null;
+            const badgesDisplay = isUnavailable ? '—' : rec ? formatNumber(rec.badges) : null;
+            const rankTitle = isUnavailable ? 'N/A' : rec?.rank || 'Explorer';
 
             return (
               <GlassCard
@@ -290,7 +304,7 @@ export default function CommunityPage() {
                     <InitialsAvatar name={student.name} id={student.id} size="md" />
                   </div>
 
-                  {/* Student Details */}
+                  {/* Student Registration Details (Renders Immediately) */}
                   <div>
                     <h3 className="font-headline text-base font-bold text-primary truncate leading-snug">
                       {student.name}
@@ -301,34 +315,60 @@ export default function CommunityPage() {
                     </p>
                   </div>
 
-                  {/* Trailhead Stats */}
+                  {/* Trailhead Progressive Hydration Stats */}
                   <div className="grid grid-cols-2 gap-2 bg-surface-container-low/70 p-3 rounded-xl border border-outline-variant/20">
                     <div>
-                      <div className="font-headline font-bold text-base text-primary">
-                        {formatNumber(points)}
-                      </div>
+                      {pointsDisplay !== null ? (
+                        <div className="font-headline font-bold text-base text-primary">
+                          {pointsDisplay}
+                        </div>
+                      ) : (
+                        <div className="h-5 w-16 bg-surface-container-high animate-pulse rounded my-0.5" />
+                      )}
                       <div className="text-[10px] text-outline font-label uppercase font-semibold">
                         Trailhead Points
                       </div>
                     </div>
                     <div>
-                      <div className="font-headline font-bold text-base text-secondary">
-                        {formatNumber(badges)}
-                      </div>
+                      {badgesDisplay !== null ? (
+                        <div className="font-headline font-bold text-base text-secondary">
+                          {badgesDisplay}
+                        </div>
+                      ) : (
+                        <div className="h-5 w-12 bg-surface-container-high animate-pulse rounded my-0.5" />
+                      )}
                       <div className="text-[10px] text-outline font-label uppercase font-semibold">
                         Badges
                       </div>
                     </div>
                   </div>
 
-                  {/* Trailblazer Rank */}
+                  {/* Trailblazer Status & Rank */}
                   <div className="flex items-center justify-between px-1 text-xs">
                     <span className="text-outline font-label text-[11px] uppercase font-semibold">
-                      Trailblazer Rank
+                      Trailblazer Status
                     </span>
-                    <span className="font-headline font-bold text-secondary text-xs uppercase tracking-wide">
-                      {rankTitle}
-                    </span>
+                    {isStudentSyncing ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-label text-secondary font-medium animate-pulse">
+                        <RefreshCw className="w-3 h-3 animate-spin" /> Syncing...
+                      </span>
+                    ) : isVerified ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-label font-bold text-green-700">
+                        <ShieldCheck className="w-3 h-3 text-green-600" /> VERIFIED
+                      </span>
+                    ) : isPrivate ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-label text-amber-700">
+                        <Lock className="w-3 h-3 text-amber-600" /> PRIVATE
+                      </span>
+                    ) : isUnavailable ? (
+                      <span className="text-[11px] font-label text-outline">
+                        UNAVAILABLE
+                      </span>
+                    ) : (
+                      <span className="font-headline font-bold text-secondary text-xs uppercase tracking-wide">
+                        {rankTitle}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -349,3 +389,12 @@ export default function CommunityPage() {
     </div>
   );
 }
+
+export default function CommunityPage() {
+  return (
+    <ErrorBoundary fallbackTitle="Community Directory Error">
+      <CommunityPageContent />
+    </ErrorBoundary>
+  );
+}
+

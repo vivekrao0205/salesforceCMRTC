@@ -34,15 +34,27 @@ export const Navbar: React.FC = () => {
       <div className="flex justify-between items-center h-20 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto">
         {/* Brand Logo & Name */}
         <Link href="/" className="flex items-center gap-3 focus:outline-none rounded-lg group">
-          <div className="relative w-10 h-10 overflow-hidden rounded-full border border-outline-variant/30 shadow-sm group-hover:scale-105 transition-transform duration-300 bg-white flex items-center justify-center p-0.5">
-            <Image
-              src="/images/logo.png"
-              alt="Salesforce Club CMRTC Logo"
-              width={40}
-              height={40}
-              className="object-contain w-full h-full"
-              priority
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative w-10 h-10 overflow-hidden rounded-full border border-outline-variant/30 shadow-sm group-hover:scale-105 transition-transform duration-300 bg-white flex items-center justify-center p-0.5">
+              <Image
+                src="/images/logo.png"
+                alt="Salesforce Club CMRTC Logo"
+                width={40}
+                height={40}
+                className="object-contain w-full h-full"
+                priority
+              />
+            </div>
+            <div className="relative h-9 w-auto hidden lg:block overflow-hidden rounded bg-white p-0.5 border border-outline-variant/20 shadow-sm">
+              <Image
+                src="/images/cmrtc-logo.png"
+                alt="CMR Technical Campus Logo"
+                width={36}
+                height={36}
+                className="object-contain h-full w-auto"
+                priority
+              />
+            </div>
           </div>
           <span className="font-headline text-headline-sm font-bold text-primary tracking-tight hidden sm:block group-hover:text-secondary transition-colors">
             Salesforce Club CMRTC
@@ -116,12 +128,12 @@ export const Navbar: React.FC = () => {
               className="block w-full"
             >
               <Button variant="primary" className="w-full">
-                Join the Club (Google Form)
+                Join the Club
               </Button>
             </a>
             <Link href="/login" onClick={() => setIsOpen(false)} className="block w-full">
               <Button variant="outline" className="w-full">
-                Admin Portal
+                Coordinator Portal
               </Button>
             </Link>
           </div>
@@ -130,3 +142,4 @@ export const Navbar: React.FC = () => {
     </header>
   );
 };
+
